@@ -1,6 +1,6 @@
 # vue-istate
 
-A Vue bindings for istate
+A Vue bindings for [istate](https://github.com/linq2js/istate)
 
 ## Define a state
 
