@@ -3,8 +3,8 @@
     <h1 id="output">{{ count }}</h1>
     <div id="loadable-loading" v-if="loadable.state === 'loading'"></div>
     <div id="loadable-value" v-else>{{ loadable.value }}</div>
-    <button v-on:click="increase" id="increase">Increase</button>
-    <button v-on:click="increaseAsync" id="increase-async">Increase</button>
+    <button v-on:click="increase" id="increase"></button>
+    <button v-on:click="increaseAsync" id="increase-async"></button>
   </div>
 </template>
 <script>

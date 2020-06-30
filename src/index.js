@@ -4,8 +4,9 @@ import iscope from 'iscope';
 const stateChangeScope = iscope(() => undefined);
 
 class LoadableWrapper {
-  constructor(state) {
+  constructor(state, type) {
     this.state = state;
+    this.type = type;
   }
 }
 
@@ -22,7 +23,7 @@ export function loadable(state) {
   if (!stateList.valid) {
     throw new Error('Invalid state');
   }
-  return new LoadableWrapper(stateList.states[0]);
+  return new LoadableWrapper(stateList.states[0], 'state');
 }
 
 export default function connect(
