@@ -52,3 +52,25 @@ export default connect(
 );
 </script>
 ```
+
+## Using loadable logic
+
+```vue
+<template>
+  <duv>
+    <div v-if="profile.state === 'loading'">Loading...</div>
+    <div v-else>{{ profile }}</div>
+  </duv>
+</template>
+<script>
+import state from 'istate';
+import connect, {loadable} from 'vue-istate';
+const profileState = state(async () => {
+  return await fetch('profile_api');
+});
+
+export default connect({
+  profile: loadable(profileState),
+});
+</script>
+```

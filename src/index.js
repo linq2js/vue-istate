@@ -1,9 +1,31 @@
 import {getStateList} from 'istate';
 import iscope from 'iscope';
 
-const stateChangeScope = iscope(() => null);
+const stateChangeScope = iscope(() => undefined);
 
-export default function createStore(
+class LoadableWrapper {
+  constructor(state) {
+    this.state = state;
+  }
+}
+
+export function useComponent() {
+  const {context} = stateChangeScope() || {};
+  if (!context) {
+    throw new Error('useComponent should be called inside component method');
+  }
+  return context;
+}
+
+export function loadable(state) {
+  const stateList = getStateList(state);
+  if (!stateList.valid) {
+    throw new Error('Invalid state');
+  }
+  return new LoadableWrapper(stateList.states[0]);
+}
+
+export default function connect(
   model,
   {
     data: prevDataBindings,
@@ -13,10 +35,9 @@ export default function createStore(
     ...otherBindings
   } = {},
 ) {
-  let currentContext;
+  const effects = [];
   const entries = Object.entries(model);
   const propBindings = [];
-  const unsubscribes = [];
   const bindings = {
     ...otherBindings,
     data() {
@@ -38,63 +59,112 @@ export default function createStore(
       ...prevMethodBindings,
     },
     mounted() {
-      currentContext = this;
+      this.__unsubscribes = [];
+      effects.forEach((effect) => effect(this));
     },
     beforeDestroy() {
       prevBeforeDestroy && prevBeforeDestroy.apply(this, arguments);
-      unsubscribes.forEach((unsubscribe) => unsubscribe());
+      this.__unsubscribes.forEach((unsubscribe) => unsubscribe());
     },
   };
-  const handleHandle = (context, changes) => {
-    changes.forEach(([name, state]) => (context[name] = state.get()));
+
+  const handleChange = (context, changes) => {
+    changes.forEach(([name, state]) => {
+      context[name] = state.get();
+    });
   };
 
   entries.forEach(([name, value]) => {
-    const stateList = getStateList(value);
-    if (stateList.valid) {
-      const state = stateList.states[0];
+    if (value && value instanceof LoadableWrapper) {
+      const state = value.state;
+      propBindings.push([name, {get: createLoadableGetter(state)}]);
+      effects.push(createLoadableEffect(name, state, handleChange));
+    } else {
+      const stateList = getStateList(value);
+      if (stateList.valid) {
+        const state = stateList.states[0];
 
-      unsubscribes.push(
-        state.subscribe(() => {
-          const {context, changes} = stateChangeScope() || {};
+        effects.push((currentContext) => {
+          currentContext.__unsubscribes.push(
+            state.subscribe(() => {
+              const {context, changes} = stateChangeScope() || {};
 
-          if (changes) {
-            changes.push([name, state]);
-          }
+              if (changes) {
+                changes.push([name, state]);
+              }
 
-          if (currentContext && currentContext !== context) {
-            handleHandle(currentContext, [[name, state]]);
-            currentContext.$forceUpdate();
-          }
-        }),
-      );
-
-      propBindings.push([name, state]);
-    } else if (typeof value === 'function') {
-      const action = value;
-      bindings.methods[name] = function () {
-        let isAsync = false;
-        const context = this;
-        const args = arguments;
-        const changes = [];
-
-        try {
-          const result = stateChangeScope({context, changes}, () =>
-            action.apply(context, args),
+              if (currentContext && currentContext !== context) {
+                handleChange(currentContext, [[name, state]]);
+                currentContext.$forceUpdate();
+              }
+            }),
           );
+        });
 
-          if (result && typeof result.then === 'function') {
-            isAsync = true;
-            return result.finally(() => {
-              handleHandle(context, changes);
-            });
+        propBindings.push([name, state]);
+      } else if (typeof value === 'function') {
+        const action = value;
+        bindings.methods[name] = function () {
+          let isAsync = false;
+          const context = this;
+          const args = arguments;
+          const changes = [];
+          try {
+            const result = stateChangeScope({context, changes}, () =>
+              action.apply(context, args),
+            );
+
+            if (result && typeof result.then === 'function') {
+              isAsync = true;
+              return result.finally(() => {
+                handleChange(context, changes);
+              });
+            }
+
+            return result;
+          } finally {
+            !isAsync && handleChange(context, changes);
           }
-        } finally {
-          !isAsync && handleHandle(context, changes);
-        }
-      };
+        };
+      } else {
+        // custom data props
+        propBindings.push([name, createLiteralState(value)]);
+      }
     }
   });
-
   return bindings;
+}
+
+function createLiteralState(value) {
+  return {
+    get: () => value,
+  };
+}
+
+function createLoadableEffect(name, state, handleChange) {
+  return (currentContext) => {
+    const value = state.get();
+    if (value && typeof value.then === 'function') {
+      const loadable = value.loadable;
+      if (loadable.state === 'loading') {
+        const unsubscribe = loadable.subscribe(() => {
+          handleChange(currentContext, [
+            [name, {get: createLoadableGetter(state)}],
+          ]);
+          currentContext.$forceUpdate();
+        });
+        currentContext.__unsubscribes.push(unsubscribe);
+      }
+    }
+  };
+}
+
+function createLoadableGetter(state) {
+  return () => {
+    const value = state.get();
+    if (value && typeof value.then === 'function') {
+      return {...value.loadable};
+    }
+    return {state: 'hasValue', value: value};
+  };
 }
