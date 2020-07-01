@@ -42,7 +42,23 @@ test('async counter', async () => {
 test('loadable counter', async () => {
   const wrapper = shallowMount(counterMethods.create(counterBindings));
   expect(wrapper.find('#loadable-loading').exists()).toBeTruthy();
+  const $defaultAsyncCount = wrapper.get('#default-async-count');
+  expect($defaultAsyncCount.text()).toBe('Loading...');
   await delay(200);
   expect(wrapper.find('#loadable-loading').exists()).toBeFalsy();
   expect(wrapper.get('#loadable-value').text()).toBe('100');
+  expect($defaultAsyncCount.text()).toBe('100');
+});
+
+test('model state', async () => {
+  const wrapper = shallowMount(counterMethods.create(counterBindings));
+  const $message = wrapper.get('#message');
+  expect($message.element.value).toBe('hi');
+  counterMethods.message.set('hello');
+  await vue.nextTick();
+  expect($message.element.value).toBe('hello');
+  await vue.nextTick();
+  $message.setValue('world');
+  await vue.nextTick();
+  expect(counterMethods.message.get()).toBe('world');
 });

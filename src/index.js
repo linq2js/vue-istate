@@ -1,51 +1,59 @@
 import {getStateList} from 'istate';
-import iscope from 'iscope';
 
-const stateChangeScope = iscope(() => undefined);
+const modelType = 1;
+const loadableType = 2;
 
-class LoadableWrapper {
-  constructor(state, type) {
-    this.state = state;
+class StateWrapper {
+  constructor(state, type, hasDefault, defaultValue) {
     this.type = type;
+    this.state = state;
+    this.hasDefault = hasDefault;
+    this.defaultValue = defaultValue;
   }
 }
 
-export function useComponent() {
-  const {context} = stateChangeScope() || {};
-  if (!context) {
-    throw new Error('useComponent should be called inside component method');
-  }
-  return context;
-}
-
-export function loadable(state) {
+function createStateWrapper(state, type, ...args) {
   const stateList = getStateList(state);
   if (!stateList.valid) {
     throw new Error('Invalid state');
   }
-  return new LoadableWrapper(stateList.states[0], 'state');
+  return new StateWrapper(stateList.states[0], type, ...args);
+}
+
+export function model(state) {
+  return createStateWrapper(state, modelType);
+}
+
+export function loadable(state, defaultValue) {
+  return createStateWrapper(
+    state,
+    loadableType,
+    arguments.length > 1,
+    defaultValue,
+  );
 }
 
 export default function connect(
   model,
   {
-    data: prevDataBindings,
-    methods: prevMethodBindings,
-    mounted: prevMounted,
-    beforeDestroy: prevBeforeDestroy,
-    ...otherBindings
+    data: customDataBinding,
+    methods: customMethodsBinding,
+    mounted: customMountedBinding,
+    beforeDestroy: customBeforeDestroyBinding,
+    watch: customWatchBinding,
+    ...otherCustomBindings
   } = {},
 ) {
   const effects = [];
   const entries = Object.entries(model);
   const propBindings = [];
   const bindings = {
-    ...otherBindings,
+    ...otherCustomBindings,
     data() {
-      const prevData = prevDataBindings
-        ? typeof prevDataBindings === 'function'
-          ? prevDataBindings.apply(this, arguments)
-          : prevDataBindings
+      const prevData = customDataBinding
+        ? typeof customDataBinding === 'function'
+          ? customDataBinding.apply(this, arguments)
+          : customDataBinding
         : {};
       const stateProps = {};
       propBindings.forEach(([name, state]) => {
@@ -57,14 +65,15 @@ export default function connect(
       };
     },
     methods: {
-      ...prevMethodBindings,
+      ...customMethodsBinding,
     },
     mounted() {
       this.__unsubscribes = [];
       effects.forEach((effect) => effect(this));
     },
     beforeDestroy() {
-      prevBeforeDestroy && prevBeforeDestroy.apply(this, arguments);
+      customBeforeDestroyBinding &&
+        customBeforeDestroyBinding.apply(this, arguments);
       this.__unsubscribes.forEach((unsubscribe) => unsubscribe());
     },
   };
@@ -76,64 +85,64 @@ export default function connect(
   };
 
   entries.forEach(([name, value]) => {
-    if (value && value instanceof LoadableWrapper) {
-      const state = value.state;
-      propBindings.push([name, {get: createLoadableGetter(state)}]);
-      effects.push(createLoadableEffect(name, state, handleChange));
+    if (value && value instanceof StateWrapper) {
+      const wrapper = value;
+      switch (wrapper.type) {
+        case loadableType:
+          const fakeState = {
+            ...wrapper.state,
+            get: createLoadableGetter(wrapper),
+          };
+          propBindings.push([name, fakeState]);
+          effects.push(
+            createLoadableEffect(name, wrapper, handleChange),
+            createStateEffect(name, fakeState, handleChange),
+          );
+          break;
+        case modelType:
+          if (!bindings.watch) {
+            bindings.watch = {...customWatchBinding};
+          }
+          bindings.watch[name] = (newValue) => {
+            if (newValue !== wrapper.state.get()) {
+              wrapper.state.set(newValue);
+            }
+          };
+          propBindings.push([name, wrapper.state]);
+          effects.push(createStateEffect(name, wrapper.state, handleChange));
+          break;
+        default:
+          throw new Error('Not supported ' + wrapper.type);
+      }
     } else {
       const stateList = getStateList(value);
       if (stateList.valid) {
         const state = stateList.states[0];
-
-        effects.push((currentContext) => {
-          currentContext.__unsubscribes.push(
-            state.subscribe(() => {
-              const {context, changes} = stateChangeScope() || {};
-
-              if (changes) {
-                changes.push([name, state]);
-              }
-
-              if (currentContext && currentContext !== context) {
-                handleChange(currentContext, [[name, state]]);
-                currentContext.$forceUpdate();
-              }
-            }),
-          );
-        });
-
+        effects.push(createStateEffect(name, state, handleChange));
         propBindings.push([name, state]);
       } else if (typeof value === 'function') {
-        const action = value;
-        bindings.methods[name] = function () {
-          let isAsync = false;
-          const context = this;
-          const args = arguments;
-          const changes = [];
-          try {
-            const result = stateChangeScope({context, changes}, () =>
-              action.apply(context, args),
-            );
-
-            if (result && typeof result.then === 'function') {
-              isAsync = true;
-              return result.finally(() => {
-                handleChange(context, changes);
-              });
-            }
-
-            return result;
-          } finally {
-            !isAsync && handleChange(context, changes);
-          }
-        };
+        bindings.methods[name] = value;
       } else {
         // custom data props
         propBindings.push([name, createLiteralState(value)]);
       }
     }
   });
+  if (!bindings.watch && customWatchBinding) {
+    bindings.watch = customWatchBinding;
+  }
   return bindings;
+}
+
+function createStateEffect(name, state, handleChange) {
+  return (currentContext) => {
+    currentContext.__unsubscribes.push(
+      state.subscribe(() => {
+        handleChange(currentContext, [[name, state]]);
+        currentContext.$forceUpdate();
+      }),
+    );
+  };
 }
 
 function createLiteralState(value) {
@@ -142,7 +151,8 @@ function createLiteralState(value) {
   };
 }
 
-function createLoadableEffect(name, state, handleChange) {
+function createLoadableEffect(name, StateWrapper, handleChange) {
+  const {state} = StateWrapper;
   return (currentContext) => {
     const value = state.get();
     if (value && typeof value.then === 'function') {
@@ -150,7 +160,7 @@ function createLoadableEffect(name, state, handleChange) {
       if (loadable.state === 'loading') {
         const unsubscribe = loadable.subscribe(() => {
           handleChange(currentContext, [
-            [name, {get: createLoadableGetter(state)}],
+            [name, {get: createLoadableGetter(StateWrapper)}],
           ]);
           currentContext.$forceUpdate();
         });
@@ -160,11 +170,23 @@ function createLoadableEffect(name, state, handleChange) {
   };
 }
 
-function createLoadableGetter(state) {
+function createLoadableGetter({state, hasDefault, defaultValue}) {
   return () => {
     const value = state.get();
     if (value && typeof value.then === 'function') {
+      if (hasDefault) {
+        if (value.loadable.state === 'hasError') {
+          throw value.loadable.error;
+        }
+        if (value.loadable.state === 'hasValue') {
+          return value.loadable.value;
+        }
+        return defaultValue;
+      }
       return {...value.loadable};
+    }
+    if (hasDefault) {
+      return value;
     }
     return {state: 'hasValue', value: value};
   };

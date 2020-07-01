@@ -1,6 +1,6 @@
 {
   "name": "vue-istate",
-  "version": "0.0.2",
+  "version": "0.0.10",
   "description": "A Vue bindings for istate",
   "main": "dist/index.js",
   "types": "src/index.d.ts",
@@ -28,7 +28,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "istate": "^0.0.19",
+    "istate": "^0.0.20",
     "iscope": "^0.0.7"
   },
   "peerDependencies": {},

@@ -53,14 +53,14 @@ export default connect(
 </script>
 ```
 
-## Using loadable logic
+## Using loadable() extension
 
 ```vue
 <template>
-  <duv>
+  <div>
     <div v-if="profile.state === 'loading'">Loading...</div>
     <div v-else>{{ profile }}</div>
-  </duv>
+  </div>
 </template>
 <script>
 import state from 'istate';
@@ -71,6 +71,27 @@ const profileState = state(async () => {
 
 export default connect({
   profile: loadable(profileState),
+});
+</script>
+```
+
+## Using model() extension
+
+```vue
+<template>
+  <div>
+    <input v-model="message" />
+    {{ message }}
+  </div>
+</template>
+<script>
+import state from 'istate';
+import connect, {model} from 'vue-istate';
+
+const MessageState = state('Hello');
+
+export default connect({
+  message: model(MessageState),
 });
 </script>
 ```
